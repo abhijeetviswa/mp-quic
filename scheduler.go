@@ -1,6 +1,7 @@
 package quic
 
 import (
+	"math/rand"
 	"time"
 
 	"github.com/lucas-clemente/quic-go/ackhandler"
@@ -69,6 +70,62 @@ func (sch *scheduler) getRetransmission(s *session) (hasRetransmission bool, ret
 	}
 	return
 }
+
+// Abhijeet Viswa
+func (sch *scheduler) selectPathRandom(s *session, hasRetransmission bool, hasStreamRetransmission bool, fromPth *path) *path {
+	if sch.quotas == nil {
+		sch.setup()
+	}
+
+	// XXX Avoid using PathID 0 if there is more than 1 path
+	if len(s.paths) <= 1 {
+		if !hasRetransmission && !s.paths[protocol.InitialPathID].SendingAllowed() {
+			return nil
+		}
+		return s.paths[protocol.InitialPathID]
+	}
+
+	var selectedPath *path
+	rand.Seed(time.Now().Unix())
+
+	// Create a list of all paths
+	var pathIds []protocol.PathID = make([]protocol.PathID, len(s.paths))
+	for pathId, _ := range s.paths {
+		pathIds = append(pathIds, pathId)
+	}
+
+	attempts := 0  // We make 5 attempts at finding a path, then return nil
+
+pathLoop:
+	for selectedPath == nil {
+		if attempts > 10 {
+			return nil
+		}
+		attempts = attempts + 1
+	  randPathId := pathIds[rand.Intn(len(pathIds))]
+
+		if randPathId == protocol.InitialPathID {
+			continue pathLoop
+		}
+		pth := s.paths[randPathId]
+
+		if !hasRetransmission && !pth.SendingAllowed() {
+			utils.Infof("Sending Not Allowed: %x", randPathId)
+			continue pathLoop
+		}
+
+		if pth.potentiallyFailed.Get() {
+			utils.Infof("Path Failed: %x", randPathId)
+			continue pathLoop
+		}
+
+		utils.Infof("Selected Path: %x", randPathId)
+		selectedPath = pth
+	}
+
+	return selectedPath
+}
+
 
 func (sch *scheduler) selectPathRoundRobin(s *session, hasRetransmission bool, hasStreamRetransmission bool, fromPth *path) *path {
 	if sch.quotas == nil {
@@ -208,8 +265,11 @@ pathLoop:
 func (sch *scheduler) selectPath(s *session, hasRetransmission bool, hasStreamRetransmission bool, fromPth *path) *path {
 	// XXX Currently round-robin
 	// TODO select the right scheduler dynamically
-	return sch.selectPathLowLatency(s, hasRetransmission, hasStreamRetransmission, fromPth)
-	// return sch.selectPathRoundRobin(s, hasRetransmission, hasStreamRetransmission, fromPth)
+	//return sch.selectPathLowLatency(s, hasRetransmission, hasStreamRetransmission, fromPth)
+	//return sch.selectPathRoundRobin(s, hasRetransmission, hasStreamRetransmission, fromPth)
+
+	// Abhijeet Viswa
+	return sch.selectPathRandom(s, hasRetransmission, hasStreamRetransmission, fromPth)
 }
 
 // Lock of s.paths must be free (in case of log print)
